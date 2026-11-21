@@ -1,0 +1,17 @@
+Asunto: Postulación a {puesto} - {nombre}
+
+Estimado/a equipo de {empresa}:
+
+Mi nombre es {nombre}, {titulo_profesional}. Me dirijo a ustedes para postular al cargo de {puesto}, publicado en {portal}.
+
+Soy un profesional motivado y en formación constante, con conocimientos en desarrollo de software, análisis de sistemas y herramientas tecnológicas actuales. Si bien cuento con experiencia limitada formal, tengo gran disposición para aprender, adaptarme rápidamente y aportar valor al equipo desde el primer día.
+
+Adjunto mi currículum vitae con más detalles de mi formación y proyectos. Quedo atento/a a cualquier consulta o posibilidad de entrevista.
+
+Saludos cordiales,
+
+{nombre}
+{titulo_profesional}
+Email: {email}
+Teléfono: {telefono}
+LinkedIn: {linkedin}

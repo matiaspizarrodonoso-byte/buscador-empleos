@@ -1,0 +1,33 @@
+﻿{
+  "region": "R.Metropolitana",
+  "incluir_remotos": true,
+  "terminos": [
+    "desarrollador",
+    "programador",
+    "ingeniero de software",
+    "ingeniero informatico",
+    "it junior",
+    "trainee",
+    "desarrollador junior",
+    "soporte ti"
+  ],
+  "paginas_por_busqueda": 2,
+  "pausa_segundos": 3,
+  "dias_maximo_publicacion": 30,
+  "excluir_practicas": true,
+  "excluir_senior": true,
+  "descargar_descripciones": true,
+  "dias_purga_historial": 60,
+  "sueldo_minimo": 0,
+  "abrir_excel_al_terminar": true,
+  "palabras_excluidas": [],
+  "empresas_excluidas": [],
+  "stack": ["python", "javascript", "react", "node", "sql", "php", "html", "css"],
+  "jooble_api_key": "",
+  "excel_salida": "empleos.xlsx",
+  "nombre": "TU NOMBRE",
+  "titulo_profesional": "Ingeniero(a) en Informática",
+  "email": "tu.email@ejemplo.com",
+  "telefono": "+56 9 XXXX XXXX",
+  "linkedin": "linkedin.com/in/tu-perfil"
+}
