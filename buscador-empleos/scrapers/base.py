@@ -288,7 +288,7 @@ _PATRONES_ANIOS = [
 # se excluyen con es_practica(), no se promueven como puestos accesibles.
 _SENALES_JUNIOR = [
     "sin experiencia", "no requiere experiencia", "sin experiencia previa",
-    "junior", "jr\b", "trainee",
+    "junior", r"jr\b", "trainee",
     "reci[eé]n titulado", "recien titulado", "primer empleo",
     "estudiante", "sin experiencia requerida",
 ]
