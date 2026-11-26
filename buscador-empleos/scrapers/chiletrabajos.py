@@ -39,20 +39,23 @@ def _texto(el) -> str:
     return el.get_text(" ", strip=True) if el else ""
 
 
-def _detalle(s, url: str) -> tuple[str, str]:
-    """(descripcion completa, salario) de la pagina de detalle de la oferta.
+def _detalle(s, url: str) -> tuple[str, str, str]:
+    """(descripcion completa, salario, titulo completo) de la pagina de detalle.
 
-    El listado solo trae ~200 caracteres truncados; el detalle trae el texto
-    completo (Chiletrabajos lo envia dentro de un comentario HTML) y el
-    sueldo real en div.botones-desc (icono de billete).
+    El listado solo trae ~200 caracteres truncados y los titulos largos
+    terminan en "..."; el detalle trae el texto completo (Chiletrabajos lo
+    envia dentro de un comentario HTML), el sueldo real en div.botones-desc
+    (icono de billete) y el titulo completo en el h1.
     """
     try:
         r = s.get(url, timeout=20)
     except Exception:
-        return "", ""
+        return "", "", ""
     if r.status_code != 200:
-        return "", ""
+        return "", "", ""
     soup = BeautifulSoup(r.text, "html.parser")
+
+    titulo = _texto(soup.select_one("h1"))
 
     salario = ""
     for span in soup.select("div.botones-desc span.btn"):
@@ -76,7 +79,7 @@ def _detalle(s, url: str) -> tuple[str, str]:
             if len(texto) > 80:
                 descripcion = texto
                 break
-    return descripcion, salario
+    return descripcion, salario, titulo
 
 
 def _parsear_pagina(html: str, termino: str) -> list[Oferta]:
@@ -131,6 +134,8 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
     descargar_desc = cargar_config().get("descargar_descripciones", True)
     vistas: set[str] = set()
     resultado: list[Oferta] = []
+    detalles_intentados = 0
+    detalles_fallidos = 0
     termino = "categoría informática"
     for pagina in range(1, paginas + 1):
         offset = (pagina - 1) * POR_PAGINA
@@ -146,6 +151,13 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
         nuevas = _parsear_pagina(r.text, termino)
         salud.registrar(len(nuevas))
         if not nuevas:
+            if pagina == 1:
+                # 0 tarjetas en la pagina 1 (siempre hay ~30) = HTML cambio.
+                # SaludPortal no alcanza a alertar (MIN_PAGINAS=3 y aqui se
+                # corta en la primera), asi que el aviso va aparte.
+                print(f"  [{NOMBRE}] ALERTA: 0 ofertas en la pagina 1 con "
+                      f"HTTP 200: el sitio pudo cambiar su HTML y el "
+                      f"scraper necesita revision.")
             break
         for o in nuevas:
             clave = o.clave_dedup()
@@ -168,15 +180,29 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
             if historial is not None:
                 o.nueva = clave not in historial
             if descargar_desc:
-                # Descripcion completa + sueldo real (1 request por oferta)
-                desc, salario = _detalle(s, o.url)
+                # Descripcion + sueldo + titulo completos (1 request/oferta)
+                desc, salario, titulo_full = _detalle(s, o.url)
+                detalles_intentados += 1
+                if not (desc or salario or titulo_full):
+                    detalles_fallidos += 1
                 pausa(pausa_seg)
+                if titulo_full:
+                    # El listado trunca los titulos largos con "...": el
+                    # titulo real puede cambiar los filtros y la clave.
+                    o.titulo = titulo_full
+                    if not es_puesto_it(o.titulo) or es_practica(o.titulo) \
+                            or es_senior(o.titulo):
+                        continue
+                    clave = o.clave_dedup()
+                    if historial is not None:
+                        o.nueva = clave not in historial
                 if desc:
                     if not es_accesible(desc):
                         continue
                     o.texto_ranking = desc
                     if o.modalidad == "No indicada":
-                        o.modalidad = detectar_modalidad(desc) or "No indicada"
+                        o.modalidad = detectar_modalidad(
+                            f"{o.titulo} {desc}") or "No indicada"
                 if salario:
                     o.salario = salario
                     if not pasa_sueldo_minimo(o.salario):
@@ -190,5 +216,10 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
             if ds and all(d > dias_max for d in ds):
                 break
         pausa(pausa_seg)
+    if detalles_intentados >= 5 and detalles_fallidos > detalles_intentados / 2:
+        print(f"  [{NOMBRE}] ALERTA: {detalles_fallidos} de "
+              f"{detalles_intentados} paginas de detalle fallaron: el sitio "
+              f"pudo cambiar su HTML (se perdieron descripciones, sueldos "
+              f"y titulos completos).")
     salud.revisar()
     return resultado

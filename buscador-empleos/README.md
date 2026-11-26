@@ -55,7 +55,7 @@ una tarea programada de Windows que corre el buscador todos los días a las
 | `dias_maximo_publicacion` | Descartar ofertas más viejas que N días |
 | `excluir_practicas` | Excluir prácticas profesionales/pasantías |
 | `excluir_senior` | Excluir senior, lead, arquitecto, gerente, etc. |
-| `descargar_descripciones` | Descargar el detalle de cada oferta en Computrabajo y Chiletrabajos (descripción completa + sueldo real). Mejora el filtro de experiencia y el ranking; hace la corrida más lenta |
+| `descargar_descripciones` | Descargar el detalle de cada oferta en Computrabajo, Trabajando.cl y Chiletrabajos (descripción completa; en Chiletrabajos también sueldo real y título completo, cuyo listado trunca los títulos largos). Mejora los filtros, el dedup y el ranking; hace la corrida más lenta |
 | `dias_purga_historial` | Días que se recuerda una oferta vista (def. 60); ofertas republicadas después vuelven a marcarse como nuevas |
 | `sueldo_minimo` | Sueldo mínimo en CLP para ofertas con sueldo conocido (0 = desactivado) |
 | `abrir_excel_al_terminar` | Abrir empleos.xlsx automáticamente al terminar |
@@ -72,9 +72,8 @@ una tarea programada de Windows que corre el buscador todos los días a las
 pytest
 ```
 
-Corre los tests de filtros en `tests/` (títulos reales de los portales:
-área IT, prácticas, senioridad, fechas y ranking). Correlos siempre que
-modifiques los filtros.
+Corre los tests de filtros, scrapers, historial y Excel en `tests/`.
+Correlos siempre que modifiques los filtros o la extracción de los portales.
 
 ## Notas
 

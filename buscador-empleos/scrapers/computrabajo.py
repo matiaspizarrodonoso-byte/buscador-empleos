@@ -7,7 +7,6 @@ URLs de búsqueda con filtro de experiencia nativo:
 
 from __future__ import annotations
 
-import re
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -17,6 +16,7 @@ from .base import (
     SaludPortal,
     cargar_config,
     crear_sesion,
+    detectar_modalidad,
     dias_desde_texto,
     en_region_o_remoto,
     es_accesible,
@@ -26,6 +26,7 @@ from .base import (
     es_senior,
     pasa_sueldo_minimo,
     pausa,
+    slugificar,
 )
 
 BASE = "https://cl.computrabajo.com"
@@ -60,8 +61,6 @@ def _parsear_pagina(html: str, termino: str) -> list[Oferta]:
         if not a_titulo:
             continue
         titulo = _texto(a_titulo)
-        if not es_puesto_it(titulo) or es_practica(titulo) or es_senior(titulo):
-            continue
 
         a_empresa = art.select_one("a[offer-grid-article-company-url]")
         empresa = _texto(a_empresa) or "No indicado"
@@ -115,8 +114,10 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
     descargar_desc = cargar_config().get("descargar_descripciones", True)
     vistas: set[str] = set()
     resultado: list[Oferta] = []
+    detalles_intentados = 0
+    detalles_fallidos = 0
     for termino in terminos:
-        slug = re.sub(r"\s+", "-", termino.strip().lower())
+        slug = slugificar(termino)
         # Dos variantes: sin experiencia (slug) y con 1 año (parametro iex=4)
         plantillas = [
             f"{BASE}/trabajo-de-{slug}-sin-experiencia",
@@ -142,6 +143,12 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
                     if clave in vistas:
                         continue
                     vistas.add(clave)
+                    # Los filtros de titulo van aca (no en el parseo) para
+                    # que el corte de pagina y SaludPortal midan las
+                    # tarjetas reales del portal.
+                    if not es_puesto_it(o.titulo) or es_practica(o.titulo) \
+                            or es_senior(o.titulo):
+                        continue
                     if es_empresa_excluida(o.empresa):
                         continue
                     if not en_region_o_remoto(o.ubicacion, o.modalidad, region, incluir_remotos):
@@ -158,11 +165,17 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
                         # 2do filtro de experiencia con la descripcion completa
                         # y texto para el ranking por stack
                         desc = _descripcion_detalle(s, o.url)
+                        detalles_intentados += 1
+                        if not desc:
+                            detalles_fallidos += 1
                         pausa(pausa_seg)
                         if desc:
                             if not es_accesible(desc):
                                 continue
                             o.texto_ranking = desc
+                            if o.modalidad == "No indicada":
+                                o.modalidad = detectar_modalidad(
+                                    f"{o.titulo} {desc}") or "No indicada"
                     resultado.append(o)
                 # Parada temprana: si TODA la pagina supera el limite de
                 # antiguedad, las siguientes seran aun mas viejas.
@@ -173,5 +186,10 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
                         break
                 pausa(pausa_seg)
             pausa(pausa_seg)
+    if detalles_intentados >= 5 and detalles_fallidos > detalles_intentados / 2:
+        print(f"  [Computrabajo] ALERTA: {detalles_fallidos} de "
+              f"{detalles_intentados} paginas de detalle fallaron: el sitio "
+              f"pudo cambiar su HTML (se perdio el 2do filtro de "
+              f"experiencia y la descripcion para el ranking).")
     salud.revisar()
     return resultado

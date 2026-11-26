@@ -18,6 +18,7 @@ scrapers/
   computrabajo.py      # Scraping HTML (BeautifulSoup) + detalle por oferta
   laborum.py           # API interna del frontend (POST JSON)
   trabajando.py        # API interna del frontend (GET JSON) + filtro nativo de region
+                       # + detalle por oferta (descripcion completa en <article>)
   getonboard.py        # API publica JSON (getonbrd.com, portal 100% tech)
   chiletrabajos.py     # Scraping HTML de la categoria /trabajos/informatica + detalle
   jooble.py            # API oficial (requiere jooble_api_key; se omite si esta vacia)
@@ -25,7 +26,7 @@ scrapers/
   linkedin.py          # Solo genera links pre-filtrados (NO se scrapea)
 excel.py               # Genera empleos.xlsx (Ofertas + hojas por portal + Mis
                        # postulaciones + links + Plantilla; respaldo si esta bloqueado)
-tests/                 # Suite pytest (filtros, fechas, ranking, historial, excel)
+tests/                 # Suite pytest (filtros, scrapers, fechas, ranking, historial, excel)
 historial.json         # {clave: fecha} de ofertas vistas (purga automatica)
 plantilla_email.txt    # Plantilla para enviar el CV (placeholders {nombre}, etc.)
 ejecutar.bat           # Atajo de doble clic para Windows (con pausa)
@@ -120,10 +121,11 @@ Casos de borde decididos con el usuario:
 - `dias_maximo_publicacion`: antigüedad máxima de las ofertas.
 - `excluir_practicas`: true/false, gobierna `es_practica()`.
 - `excluir_senior`: true/false, gobierna `es_senior()`.
-- `descargar_descripciones`: true/false. Si está activo, Computrabajo y
-  Chiletrabajos descargan el detalle de cada oferta final (descripción
-  completa + sueldo). Más lento (~+1 request por oferta) pero mejora el
-  filtro de experiencia y el ranking.
+- `descargar_descripciones`: true/false. Si está activo, Computrabajo,
+  Trabajando.cl y Chiletrabajos descargan el detalle de cada oferta final
+  (descripción completa; también sueldo y título completo en Chiletrabajos).
+  Más lento (~+1 request por oferta) pero mejora el filtro de experiencia y
+  el ranking.
 - `dias_purga_historial`: días que se recuerda una oferta vista (def. 60).
 - `sueldo_minimo`: sueldo mínimo en CLP para aceptar ofertas con sueldo
   conocido (0 = desactivado).
@@ -140,8 +142,14 @@ Casos de borde decididos con el usuario:
 Notas por portal:
 - **GetOnBoard** (`getonbrd.com`, ojo: NO getonboard.com): API pública sin
   auth. `expand=["company","tags"]` trae empresa y tags (para el ranking).
-  Las ciudades vienen como ids; se mapean una vez con `/api/v0/cities`.
-  `links.public_url` funciona sin sesión. Sueldos vienen en miles de CLP.
+  Las ciudades vienen como ids; se mapean una vez con `/api/v0/cities`
+  (si el mapa carga vacío se avisa en consola: sin él, las no-remotas se
+  descartarían en masa por ubicación). `links.public_url` funciona sin
+  sesión con Accept de navegador (con `Accept: application/json` da 406).
+  Sueldos vienen en miles de CLP. La descripción viene con tags HTML y se
+  limpia con BeautifulSoup (palabras partidas entre tags escapaban a
+  `anios_exigencia` y al ranking). `r.json()` protegido contra HTTP 200
+  no-JSON igual que en los otros portales API.
   `per_page=100` (menos requests). La senioridad se filtra en cliente con el
   campo estructurado `seniority.data.id` (1=sin experiencia, 2=junior; la
   API ignora el parámetro `seniority` en la búsqueda, sondeado en vivo).
@@ -152,28 +160,48 @@ Notas por portal:
   `/trabajos/informatica` con paginación por offset de 30. Si
   `descargar_descripciones` está activo, descarga el detalle por oferta
   (descripción completa dentro de un comentario HTML + sueldo real de
-  `div.botones-desc`). El listado no informa modalidad: se detecta con
+  `div.botones-desc` + **título completo del `h1`**: el listado trunca los
+  títulos largos con "…" (~23%), y al reemplazarlo se re-aplican los
+  filtros de título y se recalculan la clave dedup y la marca "nueva" con
+  el título real). El listado no informa modalidad: se detecta con
   `detectar_modalidad()` en título/descripción (permite que las remotas de
   otras regiones pasen el filtro de ubicación). Parada temprana: si toda
   una página supera `dias_maximo_publicacion`, se deja de paginar.
+  Alertas propias: avisa si la página 1 parsea 0 tarjetas (`SaludPortal`
+  no alcanza por su `MIN_PAGINAS=3`) y si falla más de la mitad de las
+  páginas de detalle (mínimo 5 intentos).
 - **Computrabajo**: el listado NO trae descripción. Si
   `descargar_descripciones` está activo, descarga el detalle por oferta
   (`div[div-link="oferta"]`) para aplicar `es_accesible` como segundo filtro
-  de experiencia y alimentar el ranking por stack. Parada temprana igual
-  que Chiletrabajos.
+  de experiencia y alimentar el ranking por stack; si la modalidad quedó
+  "No indicada" se re-detecta con título+descripción del detalle. El parseo
+  NO filtra por título (los filtros van en `buscar()`): así el corte de
+  paginación por página vacía y `SaludPortal` miden las tarjetas reales
+  del portal. Alerta si falla más de la mitad de las páginas de detalle
+  (mínimo 5 intentos). Parada temprana igual que Chiletrabajos.
 - **Trabajando.cl**: además del filtro nativo de experiencia
   (`aniosExpHasta=1`), filtra nativamente por región con el parámetro
   `region` (ids de la faceta "region" de la API, mapeados en `_REGION_ID`;
   ojo: NO es la numeración oficial, RM = 1). Así las páginas no se
-  desperdician en ofertas de otras zonas.
+  desperdician en ofertas de otras zonas. `cantidadResultados=50` (la API
+  lo acepta; antes 20). `r.json()` va protegido: un HTTP 200 con HTML
+  (reto WAF) avisa y corta el término en vez de tumbar toda la corrida.
+  La API solo trae un teaser (~40 chars) en `descripcionOferta`: si
+  `descargar_descripciones` está activo se descarga el detalle (texto
+  completo en el `<article>` de la página, Nuxt SSR; el sueldo NO se
+  extrae: los montos $ de la página son rangos del sidebar de filtros)
+  para `es_accesible`, el ranking y la re-detección de modalidad; alerta
+  si falla más de la mitad de los detalles (mínimo 5 intentos).
 - **Jooble**: API oficial (`POST https://jooble.org/api/{key}`), agrega
   ofertas de varios portales chilenos. Requiere `jooble_api_key` en
   config.json (gratuita en jooble.org/api/about); si está vacía se omite
   con un aviso (no es error). Los campos vienen con HTML; se limpian.
   Modalidad detectada con `detectar_modalidad()`.
-- **Laborum** (explorado, sin cambios): su API no expone sueldo ni años de
-  experiencia estructurados en el listado; el filtrado por texto sigue
-  siendo la vía.
+- **Laborum**: su API no expone sueldo (`salarioObligatorio` es solo un
+  flag) ni años de experiencia estructurados; el filtrado por texto sigue
+  siendo la vía (el `detalle` viene completo, ~3.700 chars, sin HTML).
+  Paginación base-0 (`page=0` es la primera), `pageSize=50` (la API lo
+  acepta; antes 20). `r.json()` protegido igual que en Trabajando.cl.
 
 ## Flujos de trabajo
 
@@ -200,9 +228,10 @@ Suite con pytest en `tests/` (120+ casos): `test_filtros.py` (área IT,
 prácticas, senioridad, fechas en español —incluidas "Hace X horas" = 0
 días—, región derivada del config, `detectar_modalidad`, experiencia,
 ranking), `test_mejoras.py` (dedup, empresas, sueldo mínimo, ranking,
-historial) y `test_excel.py` (persistencia de Postulado, hoja "Mis
+historial), `test_scrapers.py` (extracción de detalles, limpieza HTML y
+respuestas no-JSON) y `test_excel.py` (persistencia de Postulado, hoja "Mis
 postulaciones", respaldo ante Excel bloqueado). Correr con `pytest` tras
-cualquier cambio en los filtros de `base.py`.
+cualquier cambio en los filtros de `base.py` o en los scrapers.
 
 Para validar un scraper: correr `python buscador.py` y revisar `empleos.xlsx`.
 Los links de Computrabajo deben ser del tipo

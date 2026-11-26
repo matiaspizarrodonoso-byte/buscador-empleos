@@ -8,16 +8,24 @@ El filtro aniosExpHasta=1 restringe nativamente a <= 1 año de experiencia
 y el parametro region filtra nativamente por region (los ids vienen de la
 faceta "region" de la propia API), asi las paginas no se desperdician en
 ofertas de otras zonas.
+
+La API solo trae un teaser (~40 chars) de descripcion: con
+descargar_descripciones se baja el detalle (texto completo en el
+<article> de la pagina, Nuxt SSR) para es_accesible y el ranking.
 """
 
 from __future__ import annotations
 
 import re
 
+from bs4 import BeautifulSoup
+
 from .base import (
     Oferta,
     SaludPortal,
+    cargar_config,
     crear_sesion,
+    detectar_modalidad,
     dias_desde_texto,
     en_region_o_remoto,
     es_accesible,
@@ -32,6 +40,27 @@ from .base import (
 
 BASE = "https://www.trabajando.cl"
 API = f"{BASE}/api/searchjob"
+
+
+def _texto(el) -> str:
+    return el.get_text(" ", strip=True) if el else ""
+
+
+def _descripcion_detalle(s, url: str) -> str:
+    """Descripcion completa de la pagina de la oferta (elemento <article>).
+
+    La API solo trae un teaser (~40 chars) en descripcionOferta; el detalle
+    es server-rendered (Nuxt SSR) y el texto completo queda en el
+    <article> de la pagina. El sueldo NO se extrae: los montos $ de la
+    pagina son rangos del sidebar de filtros, no el sueldo de la oferta.
+    """
+    try:
+        r = s.get(url, timeout=20)
+    except Exception:
+        return ""
+    if r.status_code != 200:
+        return ""
+    return _texto(BeautifulSoup(r.text, "html.parser").select_one("article"))
 
 # Ids de region del filtro nativo (faceta "region" de la API, sondeada en
 # vivo). Ojo: NO es la numeracion oficial de Chile (RM = 1).
@@ -82,13 +111,16 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
     salud = SaludPortal("Trabajando.cl")
     vistas: set[str] = set()
     resultado: list[Oferta] = []
+    detalles_intentados = 0
+    detalles_fallidos = 0
+    descargar_desc = cargar_config().get("descargar_descripciones", True)
     id_region = _id_region(region)  # filtro nativo de region (faceta de la API)
     for termino in terminos:
         for pagina in range(1, paginas + 1):
             params = {
                 "palabraClave": termino,
                 "pagina": pagina,
-                "cantidadResultados": 20,
+                "cantidadResultados": 50,  # la API lo acepta (sondeado; antes 20)
                 "aniosExpDesde": 0,
                 "aniosExpHasta": 1,
                 "orden": "RANKING",
@@ -104,7 +136,15 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
             if r.status_code != 200:
                 print(f"  [Trabajando] HTTP {r.status_code} ({termino}, pag {pagina})")
                 break
-            data = r.json()
+            try:
+                data = r.json()
+            except ValueError:
+                # HTTP 200 con HTML (reto WAF, mantenimiento): sin este
+                # guarda el JSONDecodeError tumbaba TODA la corrida.
+                print(f"  [Trabajando] respuesta no-JSON con HTTP 200 "
+                      f"({termino}, pag {pagina}): posible bloqueo o "
+                      f"cambio de API")
+                break
             ofertas = data.get("ofertas") or []
             salud.registrar(len(ofertas))
             if not ofertas:
@@ -125,13 +165,34 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
                 if descripcion and not es_accesible(descripcion):
                     continue
                 if dias_max is not None:
-                    d = dias_desde_texto(o.get("fechaPublicacion") or oferta.fecha_publicacion)
+                    # Misma fecha que se muestra en el Excel (publicadoHace)
+                    d = dias_desde_texto(oferta.fecha_publicacion)
                     if d is not None and d > dias_max:
                         continue
                 if historial is not None:
                     oferta.nueva = clave not in historial
+                if descargar_desc:
+                    # La API solo trae un teaser: descripcion completa del
+                    # detalle (mejora es_accesible y el ranking por stack)
+                    desc = _descripcion_detalle(s, oferta.url)
+                    detalles_intentados += 1
+                    if not desc:
+                        detalles_fallidos += 1
+                    pausa(pausa_seg)
+                    if desc:
+                        if not es_accesible(desc):
+                            continue
+                        oferta.texto_ranking = desc
+                        if oferta.modalidad == "No indicada":
+                            oferta.modalidad = detectar_modalidad(
+                                f"{oferta.titulo} {desc}") or "No indicada"
                 resultado.append(oferta)
             pausa(pausa_seg)
         pausa(pausa_seg)
+    if detalles_intentados >= 5 and detalles_fallidos > detalles_intentados / 2:
+        print(f"  [Trabajando] ALERTA: {detalles_fallidos} de "
+              f"{detalles_intentados} paginas de detalle fallaron: el sitio "
+              f"pudo cambiar su HTML (se perdieron las descripciones "
+              f"completas).")
     salud.revisar()
     return resultado

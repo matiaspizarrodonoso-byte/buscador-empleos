@@ -1,6 +1,6 @@
 """Scraper de Laborum Chile via API interna del frontend (grupo Jobint).
 
-POST https://www.laborum.cl/api/avisos/searchNormalizado?pageSize=20&page={n}
+POST https://www.laborum.cl/api/avisos/searchNormalizado?pageSize=50&page={n}
 Headers: x-site-id: BMCL
 Body: {"filtros": [], "busquedaExtendida": false, "query": "<termino>",
        "tipoDetalle": "full", "withHome": false, "internacional": false}
@@ -27,7 +27,7 @@ BASE = "https://www.laborum.cl"
 API = f"{BASE}/api/avisos/searchNormalizado"
 
 
-def _a_oferta(aviso: dict, termino: str) -> Oferta:
+def _a_oferta(aviso: dict, termino: str) -> tuple[Oferta, str]:
     titulo = aviso.get("titulo") or ""
     id_aviso = aviso.get("id")
     detalle = aviso.get("detalle") or ""
@@ -75,14 +75,23 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
                 "internacional": False,
             }
             try:
-                r = s.post(f"{API}?pageSize=20&page={pagina}", json=body, timeout=25)
+                r = s.post(f"{API}?pageSize=50&page={pagina}", json=body,  # 50 sondeado OK (antes 20)
+                           timeout=25)
             except Exception as e:
                 print(f"  [Laborum] error ({termino}, pag {pagina}): {e}")
                 continue
             if r.status_code != 200:
                 print(f"  [Laborum] HTTP {r.status_code} ({termino}, pag {pagina})")
                 break
-            data = r.json()
+            try:
+                data = r.json()
+            except ValueError:
+                # HTTP 200 con HTML (reto WAF, mantenimiento): sin este
+                # guarda el JSONDecodeError tumbaba TODA la corrida.
+                print(f"  [Laborum] respuesta no-JSON con HTTP 200 "
+                      f"({termino}, pag {pagina}): posible bloqueo o "
+                      f"cambio de API")
+                break
             avisos = data.get("content") or []
             salud.registrar(len(avisos))
             if not avisos:

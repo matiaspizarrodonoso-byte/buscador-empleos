@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from bs4 import BeautifulSoup
+
 from .base import (
     Oferta,
     SaludPortal,
@@ -103,8 +105,14 @@ def _a_oferta(item: dict, termino: str, ciudades: dict) -> tuple[Oferta, str]:
             min_s, max_s = min_s * 1000, max_s * 1000
         salario = f"${min_s:,.0f} - ${max_s:,.0f}".replace(",", ".")
 
-    # Descripción + tags: texto para filtro de experiencia y ranking por stack
+    # Descripción + tags: texto para filtro de experiencia y ranking por stack.
+    # La descripcion viene con tags HTML: sin limpiarlos, palabras partidas
+    # entre tags ("3 <strong>años</strong>") escapan a anios_exigencia y al
+    # ranking.
     descripcion = a.get("description") or ""
+    if "<" in descripcion:
+        descripcion = BeautifulSoup(
+            descripcion, "html.parser").get_text(" ", strip=True)
     tags = []
     for tag in ((a.get("tags") or {}).get("data") or []):
         attrs = tag.get("attributes") or {}
@@ -136,6 +144,11 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
     s.headers.update({"Accept": "application/json", "Referer": f"{BASE}/"})
     salud = SaludPortal(NOMBRE)
     ciudades = _mapa_ciudades(s)
+    if not ciudades:
+        # Sin el mapa toda oferta cae a ubicacion "Chile" y las no-remotas
+        # se descartarian en masa: mejor avisar que fallar en silencio.
+        print(f"  [{NOMBRE}] aviso: no se pudo cargar el mapa de ciudades; "
+              f"las ofertas no-remotas podrian descartarse por ubicacion.")
     vistas: set[str] = set()
     resultado: list[Oferta] = []
     for termino in terminos:
@@ -156,7 +169,16 @@ def buscar(terminos: list[str], region: str, incluir_remotos: bool,
             if r.status_code != 200:
                 print(f"  [{NOMBRE}] HTTP {r.status_code} ({termino}, pag {pagina})")
                 break
-            items = r.json().get("data") or []
+            try:
+                data = r.json()
+            except ValueError:
+                # HTTP 200 con HTML (reto WAF, mantenimiento): sin este
+                # guarda el JSONDecodeError tumbaba TODA la corrida.
+                print(f"  [{NOMBRE}] respuesta no-JSON con HTTP 200 "
+                      f"({termino}, pag {pagina}): posible bloqueo o "
+                      f"cambio de API")
+                break
+            items = data.get("data") or []
             salud.registrar(len(items))
             if not items:
                 break
